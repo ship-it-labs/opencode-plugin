@@ -1,0 +1,258 @@
+name: Platform build
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: Control plane build id
+        required: true
+        type: string
+      install_commands:
+        description: JSON array of install commands
+        required: false
+        default: '[]'
+        type: string
+      build_commands:
+        description: JSON array of build commands
+        required: true
+        type: string
+      test_commands:
+        description: JSON array of test commands
+        required: false
+        default: '[]'
+        type: string
+      source_url:
+        description: Signed URL of the uploaded project archive
+        required: false
+        default: ''
+        type: string
+      source_sha256:
+        description: Expected SHA-256 of the project archive
+        required: false
+        default: ''
+        type: string
+      checkout_url:
+        description: Fallback repository to check out when no upload is provided
+        required: false
+        default: ''
+        type: string
+      checkout_ref:
+        description: Branch, tag or commit to check out
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: build-${{ inputs.build_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    name: Build ${{ inputs.build_id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      exit_code: ${{ steps.result.outputs.exit_code }}
+      status: ${{ steps.result.outputs.status }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - name: Parse command inputs
+        id: parse
+        env:
+          INSTALL_COMMANDS: ${{ inputs.install_commands }}
+          BUILD_COMMANDS: ${{ inputs.build_commands }}
+          TEST_COMMANDS: ${{ inputs.test_commands }}
+        run: |
+          set -euo pipefail
+          echo "install=$(jq -c 'if type=="array" then . else [] end' <<< "$INSTALL_COMMANDS")" >> "$GITHUB_OUTPUT"
+          echo "build=$(jq -c 'if type=="array" then . else [] end' <<< "$BUILD_COMMANDS")" >> "$GITHUB_OUTPUT"
+          echo "test=$(jq -c 'if type=="array" then . else [] end' <<< "$TEST_COMMANDS")" >> "$GITHUB_OUTPUT"
+
+      - name: Download uploaded project
+        if: ${{ inputs.source_url != '' }}
+        env:
+          SOURCE_URL: ${{ inputs.source_url }}
+          SOURCE_SHA256: ${{ inputs.source_sha256 }}
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 --retry-delay 2 -o project.zip "$SOURCE_URL"
+
+          if [ -n "$SOURCE_SHA256" ]; then
+            actual="$(sha256sum project.zip | awk '{print $1}')"
+            if [ "$actual" != "$SOURCE_SHA256" ]; then
+              echo "::error::Archive checksum mismatch. expected=$SOURCE_SHA256 actual=$actual"
+              exit 1
+            fi
+            echo "Archive verified: $actual"
+          fi
+
+      - name: Extract project
+        if: ${{ inputs.source_url != '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p project
+          unzip -q project.zip -d project
+          # Archives produced by the plugin can contain a single top level
+          # directory; flatten it so install_commands see the project root.
+          if [ "$(find project -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ] && [ -d "project/$(ls project)" ]; then
+            mv "project/$(ls project)"/* project/ 2>/dev/null || true
+            rmdir "project/$(ls project)" 2>/dev/null || true
+          fi
+          echo "Extracted $(find project -type f | wc -l) files"
+
+      - name: Checkout project
+        if: ${{ inputs.source_url == '' && inputs.checkout_url != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.checkout_url }}
+          ref: ${{ inputs.checkout_ref }}
+          path: project
+          token: ${{ secrets.GITHUB_TOKEN }}
+          submodules: recursive
+
+      - name: Verify source is present
+        run: |
+          set -euo pipefail
+          if [ ! -d project ] || [ -z "$(ls -A project 2>/dev/null)" ]; then
+            echo "::error::No source available. Provide source_url from project_upload, or checkout_url."
+            exit 1
+          fi
+
+      - name: Detect runtime
+        id: detect
+        working-directory: project
+        run: |
+          set -euo pipefail
+          if [ -f package.json ]; then
+            echo "ecosystem=node" >> "$GITHUB_OUTPUT"
+          elif [ -f requirements.txt ] || [ -f pyproject.toml ]; then
+            echo "ecosystem=python" >> "$GITHUB_OUTPUT"
+          elif [ -f go.mod ]; then
+            echo "ecosystem=go" >> "$GITHUB_OUTPUT"
+          elif [ -f Cargo.toml ]; then
+            echo "ecosystem=rust" >> "$GITHUB_OUTPUT"
+          else
+            echo "ecosystem=unknown" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            project/node_modules
+            ~/.npm
+            ~/.cache/pnpm
+            ~/.cache/yarn
+            ~/.cache/pip
+          key: ${{ runner.os }}-build-${{ inputs.build_id }}
+          restore-keys: |
+            ${{ runner.os }}-build-
+
+      - name: Run install, build and test commands
+        id: result
+        env:
+          INSTALL_COMMANDS: ${{ steps.parse.outputs.install }}
+          BUILD_COMMANDS: ${{ steps.parse.outputs.build }}
+          TEST_COMMANDS: ${{ steps.parse.outputs.test }}
+        working-directory: project
+        run: |
+          set -uo pipefail
+          status="success"
+          exit_code=0
+
+          run_stage() {
+            local stage="$1"
+            local commands="$2"
+            echo "::group::${stage}"
+            while IFS= read -r cmd; do
+              [ -z "$cmd" ] && continue
+              echo "\$ $cmd"
+              set +e
+              eval "$cmd" 2>&1
+              code=$?
+              set -e
+              if [ $code -ne 0 ]; then
+                echo "::endgroup::"
+                echo "STAGE=${stage} EXIT_CODE=$code"
+                return $code
+              fi
+            done < <(jq -r '.[]' <<< "$commands")
+            echo "::endgroup::"
+            return 0
+          }
+
+          run_stage "install" "$INSTALL_COMMANDS" || exit_code=$?
+          if [ "$exit_code" -eq 0 ]; then
+            run_stage "build" "$BUILD_COMMANDS" || exit_code=$?
+          fi
+          if [ "$exit_code" -eq 0 ]; then
+            run_stage "test" "$TEST_COMMANDS" || exit_code=$?
+          fi
+
+          if [ "$exit_code" -ne 0 ]; then
+            status="failure"
+          fi
+
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit $exit_code
+
+      - name: Package build output
+        if: always()
+        id: checksum
+        run: |
+          set -uo pipefail
+          cd project
+          dirs=()
+          for d in dist build out .next target release; do
+            [ -d "$d" ] && dirs+=("$d")
+          done
+          for f in $(ls *.tar.gz *.zip 2>/dev/null); do
+            cp "$f" ../artifact-payload.tar.gz 2>/dev/null || true
+          done
+          if [ ${#dirs[@]} -gt 0 ]; then
+            tar -czf ../artifact-payload.tar.gz "${dirs[@]}" 2>/dev/null || true
+          fi
+          cd ..
+          if [ -f artifact-payload.tar.gz ]; then
+            sha256sum artifact-payload.tar.gz | awk '{print $1}' > artifact.sha256
+            stat -c%s artifact-payload.tar.gz > artifact.size
+          else
+            echo "" > artifact.sha256
+            echo "0" > artifact.size
+          fi
+
+      - name: Upload build artifact
+        id: upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ inputs.build_id }}
+          path: |
+            artifact-payload.tar.gz
+            artifact.sha256
+            artifact.size
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Report result
+        if: always()
+        env:
+          BUILD_ID: ${{ inputs.build_id }}
+          EXIT_CODE: ${{ steps.result.outputs.exit_code }}
+          STATUS: ${{ steps.result.outputs.status }}
+          SHA256: ${{ steps.checksum.outputs.sha256 }}
+        run: |
+          {
+            echo "## Build $BUILD_ID"
+            echo ""
+            echo "- status: ${STATUS:-timeout}"
+            echo "- exit_code: ${EXIT_CODE:-1}"
+            echo "- artifact_sha256: ${SHA256}"
+            echo "- workflow_run_id: ${GITHUB_RUN_ID}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0

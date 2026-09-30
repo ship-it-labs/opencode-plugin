@@ -4,18 +4,32 @@ Exposes the Ship-It platform's build, runtime, artifact, filesystem, network and
 
 ## Install
 
+Install from npm and restart OpenCode:
+
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
   "plugin": ["opencode-shipit-runtime"],
-  "env": {
-    "SHIPIT_API_KEY": "ox_live_xxxxxxxxxxxxxxxxx",
-    "SHIPIT_CONTROL_PLANE_URL": "http://localhost:3000"
-  }
 }
 ```
 
-The key is created in the website dashboard and is only shown in full at creation time.
+```bash
+npm install -g opencode-shipit-runtime
+```
+
+Then give the plugin your account key. Create one in the website dashboard
+under API keys, and write it to `~/.config/opencode/shipit.key`:
+
+```bash
+echo "ox_live_xxxxxxxxxxxxxxxxx" > ~/.config/opencode/shipit.key
+```
+
+The plugin reads the key from `SHIPIT_API_KEY` first and falls back to that
+file, because launchers do not always forward custom environment variables to
+plugins. The key is only ever shown in full at creation time, so copy it then.
+
+Set `SHIPIT_CONTROL_PLANE_URL` if your control plane is not on
+`http://localhost:3000`.
 
 ## Tools
 

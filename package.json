@@ -1,6 +1,6 @@
 {
   "name": "opencode-shipit-runtime",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "OpenCode plugin exposing Ship-It build, runtime, artifact, filesystem and usage tools to the AI",
   "type": "module",
   "main": "dist/index.js",
@@ -11,7 +11,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "dev": "tsc --watch",
     "build": "tsc",
@@ -19,7 +21,12 @@
     "lint": "eslint src/",
     "test": "vitest run"
   },
-  "keywords": ["opencode", "opencode-plugin", "runtime", "deploy"],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "runtime",
+    "deploy"
+  ],
   "license": "MIT",
   "dependencies": {
     "@opencode-ai/plugin": "^1.18.33",

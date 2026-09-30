@@ -22,7 +22,7 @@ export interface BuildSubmission {
 }
 
 export function createBuildTools(state: SessionState): ToolRegistry {
-  const submitBuild = tool({
+const submitBuild = tool({
     description:
       "Submit a build to the platform build system. Installs dependencies and builds the project in GitHub Actions with a hard 180 second timeout. Returns a build id; use build_logs to inspect the result.",
     args: {
@@ -30,21 +30,39 @@ export function createBuildTools(state: SessionState): ToolRegistry {
       install_commands: tool.schema
         .array(tool.schema.string())
         .optional()
-        .describe("Dependency install commands, e.g. ['npm ci']"),
+        .describe(
+          "Dependency install commands, e.g. ['npm ci']. Leave empty if the " +
+            "project has no dependencies to install."
+        ),
       build_commands: tool.schema
         .array(tool.schema.string())
-        .describe("Build commands, e.g. ['npm run build']"),
+        .optional()
+        .describe(
+          "Build commands, e.g. ['npm run build']. Leave empty for projects " +
+            "that need no compilation, such as static sites or plain scripts that " +
+            "run straight from source. At least one of install, build or test must " +
+            "be provided."
+        ),
       test_commands: tool.schema
         .array(tool.schema.string())
         .optional()
         .describe("Test commands, e.g. ['npm test']"),
     },
     async execute(args) {
+      const total =
+        (args.install_commands?.length ?? 0) +
+        (args.build_commands?.length ?? 0) +
+        (args.test_commands?.length ?? 0);
+
+      if (total === 0) {
+        return "Provide at least one install, build or test command.";
+      }
+
       try {
         const result = await state.api.post<BuildSubmission>("/api/v1/builds", {
           project_id: args.project_id,
           install_commands: args.install_commands ?? [],
-          build_commands: args.build_commands,
+          build_commands: args.build_commands ?? [],
           test_commands: args.test_commands ?? [],
         });
         state.trackBuild(result);

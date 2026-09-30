@@ -141,6 +141,15 @@ export function createProjectTools(state: SessionState): ToolRegistry {
             "uploading them wastes the upload and rarely helps."
         ),
       project_name: tool.schema.string().optional().describe("Display name for the project"),
+      run_command: tool.schema
+        .string()
+        .optional()
+        .describe(
+          "The command that starts this project, run inside the sandbox on the " +
+            "runtime, e.g. 'node dist/server.js' or 'npm start'. The server-agent " +
+            "uses this as the container entrypoint instead of guessing, so set it " +
+            "whenever the app does not start on its own."
+        ),
     },
     async execute(args, context) {
       try {
@@ -172,6 +181,7 @@ export function createProjectTools(state: SessionState): ToolRegistry {
         const form = new FormData();
         form.append("project_id", args.project_id);
         if (args.project_name) form.append("project_name", args.project_name);
+        if (args.run_command) form.append("run_command", args.run_command);
         form.append("manifest", JSON.stringify(manifest));
         form.append(
           "file",

@@ -69,14 +69,23 @@ export function createRuntimeTools(state: SessionState): ToolRegistry {
     },
     async execute(args) {
       try {
-        const result = await state.api.get<{ runtime: Record<string, unknown> }>(
+        const result = await state.api.get<{ runtime?: Record<string, unknown> }>(
           `/api/v1/runtimes/${args.runtime_id}`
         );
-        const r = result.runtime;
+        // The server returns the runtime under `runtime`. Reading straight off
+        // the response body produced "undefined is not an object" whenever that
+        // wrapper was absent, which hid the real answer.
+        const r = result.runtime ?? (result as unknown as Record<string, unknown>);
+        if (!r || typeof r !== "object") {
+          return `Runtime ${args.runtime_id} returned no status.`;
+        }
+
+        const id = (r.runtime_id as string) ?? (r.id as string) ?? args.runtime_id;
         return [
-          `runtime_id: ${r.id}`,
-          `status: ${r.status}`,
+          `runtime_id: ${id}`,
+          `status: ${r.status ?? "unknown"}`,
           `app_url: ${r.app_url ?? "n/a"}`,
+          `project_id: ${r.project_id ?? "n/a"}`,
           `lease_expires_at: ${r.lease_expires_at ?? "n/a"}`,
           `started_at: ${r.started_at ?? "n/a"}`,
           `stopped_at: ${r.stopped_at ?? "n/a"}`,

@@ -246,6 +246,11 @@ jobs:
           EXIT_CODE: ${{ steps.result.outputs.exit_code }}
           STATUS: ${{ steps.result.outputs.status }}
           SHA256: ${{ steps.checksum.outputs.sha256 }}
+          REPORT_TOKEN: ${{ secrets.BUILD_REPORT_TOKEN }}
+          REPORT_URL: ${{ vars.PLATFORM_API_URL }}
+          # `gh` refuses to read a run log without a token, and the workflow
+          # token is the only one with actions:read here.
+          GH_TOKEN: ${{ github.token }}
         run: |
           {
             echo "## Build $BUILD_ID"
@@ -255,4 +260,46 @@ jobs:
             echo "- artifact_sha256: ${SHA256}"
             echo "- workflow_run_id: ${GITHUB_RUN_ID}"
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # Without this the build stays "running" on the dashboard forever and
+          # its output is only readable here on github.com. Never fail the step
+          # over a reporting problem: the build result is already decided.
+          if [ -z "$REPORT_TOKEN" ] || [ -z "$REPORT_URL" ]; then
+            echo "::notice::BUILD_REPORT_TOKEN or PLATFORM_API_URL is unset, skipping the build report"
+            exit 0
+          fi
+
+          log_file="$RUNNER_TEMP/build.log"
+          # --log is not available while the job is still running, so a failure
+          # here just means we report status without output.
+          gh run view "$GITHUB_RUN_ID" --log > "$log_file" 2>/dev/null || \
+            echo "(log unavailable for this run)" > "$log_file"
+
+          payload="$RUNNER_TEMP/report.json"
+          jq -n \
+            --arg status "${STATUS:-timeout}" \
+            --argjson exit_code "${EXIT_CODE:-1}" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --rawfile log "$log_file" \
+            '{
+              status: $status,
+              exit_code: $exit_code,
+              workflow_run_id: $run_id,
+              logs: (
+                $log
+                | split("\n")
+                | map(select(length > 0))
+                | map({stream: "stdout", content: .})
+              )
+            }' > "$payload"
+
+          if curl -fsS --retry 3 --retry-delay 2 \
+            -X POST "$REPORT_URL/api/v1/builds/$BUILD_ID/report" \
+            -H "x-build-report-token: $REPORT_TOKEN" \
+            -H "content-type: application/json" \
+            --data-binary "@$payload" > /dev/null; then
+            echo "Reported build result to the control plane."
+          else
+            echo "::warning::Could not report the build result; the dashboard will time this build out."
+          fi
           exit 0

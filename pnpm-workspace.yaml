@@ -1,3 +1,7 @@
+packages:
+  - "."
+
+# Both ship a platform binary through their install script.
 allowBuilds:
-  esbuild: set this to true or false
-  msgpackr-extract: set this to true or false
+  esbuild: true
+  msgpackr-extract: true

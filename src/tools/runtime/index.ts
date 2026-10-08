@@ -7,7 +7,7 @@ import { formatError } from "../build/index.js";
 export function createRuntimeTools(state: SessionState): ToolRegistry {
   const start = tool({
     description:
-      "Start a runtime session for a project. The session runs in an isolated ephemeral sandbox on a server-agent. Duration is capped by the plan and the remaining monthly quota; the server is authoritative.",
+      "Start a runtime session for a project. The session runs in an isolated ephemeral sandbox on a server-agent: the project's language toolchain builds a self-contained bundle in CI, and the sandbox executes that bundle with the project's stored environment. Duration is capped by the plan and the remaining monthly quota; the server is authoritative.",
     args: {
       project_id: tool.schema.string().describe("The project id to run"),
     },

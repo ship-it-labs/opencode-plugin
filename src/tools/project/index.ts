@@ -5,6 +5,11 @@ import type { SessionState } from "../../core/state/session.js";
 import type { ToolRegistry } from "../types.js";
 import { formatError } from "../build/index.js";
 import { zipDirectory } from "./zip.js";
+import {
+  LANGUAGES,
+  LANGUAGE_ARG_DESCRIPTION,
+  PROJECT_ENV_ARG_DESCRIPTION,
+} from "../languages.js";
 
 /**
  * Directories excluded by default. These are dependency caches and build output
@@ -150,6 +155,14 @@ export function createProjectTools(state: SessionState): ToolRegistry {
             "uses this as the container entrypoint instead of guessing, so set it " +
             "whenever the app does not start on its own."
         ),
+      language: tool.schema
+        .enum(LANGUAGES)
+        .optional()
+        .describe(LANGUAGE_ARG_DESCRIPTION),
+      env: tool.schema
+        .record(tool.schema.string(), tool.schema.string())
+        .optional()
+        .describe(PROJECT_ENV_ARG_DESCRIPTION),
     },
     async execute(args, context) {
       try {
@@ -182,6 +195,8 @@ export function createProjectTools(state: SessionState): ToolRegistry {
         form.append("project_id", args.project_id);
         if (args.project_name) form.append("project_name", args.project_name);
         if (args.run_command) form.append("run_command", args.run_command);
+        if (args.language) form.append("language", args.language);
+        if (args.env) form.append("env", JSON.stringify(args.env));
         form.append("manifest", JSON.stringify(manifest));
         form.append(
           "file",

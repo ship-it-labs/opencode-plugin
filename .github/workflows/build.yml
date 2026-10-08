@@ -41,6 +41,21 @@ on:
         required: false
         default: ''
         type: string
+      language:
+        description: Project language (node, python, go, cpp, c, rust, java, ruby, elixir). Empty means detect from the sources.
+        required: false
+        default: ''
+        type: string
+      run_command:
+        description: Command that starts the built project inside the runtime sandbox
+        required: false
+        default: ''
+        type: string
+      build_env:
+        description: JSON object of build-time environment variables (never logged, never stored)
+        required: false
+        default: '{}'
+        type: string
 
 concurrency:
   group: build-${{ inputs.build_id }}
@@ -127,7 +142,11 @@ jobs:
         working-directory: project
         run: |
           set -euo pipefail
-          if [ -f package.json ]; then
+          # The control plane resolves the language the same way and passes it
+          # in; detection here is the fallback for older dispatches that omit it.
+          if [ -n "${{ inputs.language }}" ]; then
+            echo "ecosystem=${{ inputs.language }}" >> "$GITHUB_OUTPUT"
+          elif [ -f package.json ]; then
             echo "ecosystem=node" >> "$GITHUB_OUTPUT"
           elif [ -f requirements.txt ] || [ -f pyproject.toml ]; then
             echo "ecosystem=python" >> "$GITHUB_OUTPUT"
@@ -135,9 +154,131 @@ jobs:
             echo "ecosystem=go" >> "$GITHUB_OUTPUT"
           elif [ -f Cargo.toml ]; then
             echo "ecosystem=rust" >> "$GITHUB_OUTPUT"
+          elif [ -f mix.exs ]; then
+            echo "ecosystem=elixir" >> "$GITHUB_OUTPUT"
+          elif [ -f pom.xml ] || [ -f build.gradle ] || [ -f build.gradle.kts ]; then
+            echo "ecosystem=java" >> "$GITHUB_OUTPUT"
+          elif [ -f Gemfile ]; then
+            echo "ecosystem=ruby" >> "$GITHUB_OUTPUT"
+          elif [ -f CMakeLists.txt ] || [ -f Makefile ] || ls *.cpp *.cc 1>/dev/null 2>&1; then
+            echo "ecosystem=cpp" >> "$GITHUB_OUTPUT"
           else
             echo "ecosystem=unknown" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Mask and export build environment
+        env:
+          BUILD_ENV: ${{ inputs.build_env }}
+        run: |
+          set -euo pipefail
+          # Values arrive as plain input text, so GitHub does not mask them
+          # automatically. Register every value as a secret mask first, then
+          # export — in that order, so nothing leaks in between.
+          while IFS= read -r value; do
+            [ -z "$value" ] && continue
+            masked="$(printf '%s' "$value" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g')"
+            echo "::add-mask::$masked"
+          done < <(jq -r '.[]' <<< "$BUILD_ENV" 2>/dev/null || true)
+          while IFS="=" read -r name value; do
+            [ -z "$name" ] && continue
+            printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
+          done < <(jq -r 'to_entries[] | "\(.key)=\(.value)"' <<< "$BUILD_ENV" 2>/dev/null || true)
+          echo "Exported $(jq 'length' <<< "$BUILD_ENV" 2>/dev/null || echo 0) build variables (values masked)."
+
+      - name: Set up pinned Node toolchain
+        if: ${{ steps.detect.outputs.ecosystem == 'node' }}
+        run: |
+          set -euo pipefail
+          # Must match server-agent/internal/toolchain NodeVersion. The runner
+          # image ships its own node, but the bundle needs a pinned,
+          # relocatable copy that travels with the app.
+          NODE_VERSION="24.21.0"
+          curl -fsSL --retry 3 --retry-delay 2 \
+            "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+            -o node-toolchain.tar.xz
+          mkdir -p "$RUNNER_TEMP/node-toolchain"
+          tar -xJf node-toolchain.tar.xz -C "$RUNNER_TEMP/node-toolchain" --strip-components=1
+          echo "$RUNNER_TEMP/node-toolchain/bin" >> "$GITHUB_PATH"
+          node --version
+          echo "NODE_TOOLCHAIN=$RUNNER_TEMP/node-toolchain" >> "$GITHUB_ENV"
+
+      # Pinned toolchain versions live in server-agent/internal/toolchain and
+      # are mirrored here. Bump both together; the agent validates the language
+      # while this workflow installs the matching toolchain.
+      - name: Set up pinned Go toolchain
+        if: ${{ steps.detect.outputs.ecosystem == 'go' }}
+        run: |
+          set -euo pipefail
+          GO_VERSION="1.27"
+          curl -fsSL --retry 3 --retry-delay 2 \
+            "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o go-toolchain.tar.gz
+          mkdir -p "$RUNNER_TEMP/go-toolchain"
+          tar -xzf go-toolchain.tar.gz -C "$RUNNER_TEMP/go-toolchain"
+          echo "$RUNNER_TEMP/go-toolchain/go/bin" >> "$GITHUB_PATH"
+          echo "GOTOOLCHAIN=local" >> "$GITHUB_ENV"
+          go version
+
+      - name: Set up pinned Python toolchain
+        if: ${{ steps.detect.outputs.ecosystem == 'python' }}
+        run: |
+          set -euo pipefail
+          # Relocatable CPython: the same layout ships inside the bundle, so
+          # the interpreter the build used is the interpreter the sandbox runs.
+          PY_VERSION="3.13.5"
+          PY_TAG="20250814"
+          curl -fsSL --retry 3 --retry-delay 2 \
+            "https://github.com/astral-sh/python-build-standalone/releases/download/${PY_TAG}/cpython-${PY_VERSION}+${PY_TAG}-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz" \
+            -o python-toolchain.tar.gz
+          mkdir -p "$RUNNER_TEMP/python-toolchain"
+          tar -xzf python-toolchain.tar.gz -C "$RUNNER_TEMP/python-toolchain"
+          echo "$RUNNER_TEMP/python-toolchain/python/bin" >> "$GITHUB_PATH"
+          echo "PYTHON_TOOLCHAIN=$RUNNER_TEMP/python-toolchain/python" >> "$GITHUB_ENV"
+          python3 --version || python --version
+          python3 -m ensurepip --default-pip 2>/dev/null || python -m ensurepip --default-pip 2>/dev/null || true
+
+      - name: Set up pinned C/C++ toolchain
+        if: ${{ steps.detect.outputs.ecosystem == 'cpp' || steps.detect.outputs.ecosystem == 'c' }}
+        run: |
+          set -euo pipefail
+          # musl.cc native toolchain: static-capable gcc with no root needed.
+          # Versionless upstream; the build log records the gcc version for
+          # traceability instead.
+          curl -fsSL --retry 3 --retry-delay 2 \
+            "https://musl.cc/x86_64-linux-musl-native.tgz" -o musl-toolchain.tgz
+          mkdir -p "$RUNNER_TEMP/musl-toolchain"
+          tar -xzf musl-toolchain.tgz -C "$RUNNER_TEMP/musl-toolchain" --strip-components=1
+          echo "$RUNNER_TEMP/musl-toolchain/bin" >> "$GITHUB_PATH"
+          echo "CC=$RUNNER_TEMP/musl-toolchain/bin/gcc" >> "$GITHUB_ENV"
+          gcc --version | head -1
+
+      - name: Set up Rust toolchain
+        if: ${{ steps.detect.outputs.ecosystem == 'rust' }}
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustc --version && cargo --version
+
+      - name: Set up Java toolchain
+        if: ${{ steps.detect.outputs.ecosystem == 'java' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Ruby toolchain
+        if: ${{ steps.detect.outputs.ecosystem == 'ruby' }}
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+
+      - name: Set up Elixir toolchain
+        if: ${{ steps.detect.outputs.ecosystem == 'elixir' }}
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: '27'
+          elixir-version: '1.18'
 
       - name: Cache dependencies
         uses: actions/cache@v4
@@ -200,6 +341,234 @@ jobs:
           echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
           echo "status=$status" >> "$GITHUB_OUTPUT"
           exit $exit_code
+
+      - name: Bundle node runtime
+        id: bundle
+        if: ${{ success() && steps.detect.outputs.ecosystem == 'node' }}
+        env:
+          RUN_COMMAND: ${{ inputs.run_command }}
+        run: |
+          set -euo pipefail
+          # A self-contained bundle the sandbox runs without any toolchain of
+          # its own: the pinned node binary, the built app with its
+          # node_modules, and an entry manifest saying how to start it.
+          rm -rf bundle && mkdir -p bundle/app bundle/node
+          cp -r project/. bundle/app/
+          rm -rf bundle/app/.git
+          cp -r "$NODE_TOOLCHAIN/." bundle/node/
+          jq -n \
+            --arg language "node" \
+            --arg run_command "$RUN_COMMAND" \
+            --arg node_version "24.21.0" \
+            '{language: $language, run_command: $run_command, toolchain: {node: $node_version}, created: now | todate}' \
+            > bundle/entry.json
+          (cd bundle && zip -qr ../bundle.zip node app entry.json)
+          sha256sum bundle.zip | awk '{print $1}' > bundle.sha256
+          stat -c%s bundle.zip > bundle.size
+          echo "Bundle: $(cat bundle.size) bytes, sha $(cat bundle.sha256)"
+
+      - name: Bundle python runtime
+        id: bundle-python
+        if: ${{ success() && steps.detect.outputs.ecosystem == 'python' }}
+        env:
+          RUN_COMMAND: ${{ inputs.run_command }}
+        run: |
+          set -euo pipefail
+          rm -rf bundle && mkdir -p bundle/app bundle/python
+          cp -r project/. bundle/app/
+          rm -rf bundle/app/.git bundle/app/__pycache__
+          cp -r "$PYTHON_TOOLCHAIN/." bundle/python/
+          jq -n \
+            --arg language "python" \
+            --arg run_command "$RUN_COMMAND" \
+            '{language: $language, run_command: $run_command, toolchain: {python: "3.13.5"}, created: now | todate}' \
+            > bundle/entry.json
+          (cd bundle && zip -qr ../bundle.zip python app entry.json)
+          sha256sum bundle.zip | awk '{print $1}' > bundle.sha256
+          stat -c%s bundle.zip > bundle.size
+          echo "Bundle: $(cat bundle.size) bytes, sha $(cat bundle.sha256)"
+
+      - name: Bundle go runtime
+        id: bundle-go
+        if: ${{ success() && steps.detect.outputs.ecosystem == 'go' }}
+        env:
+          RUN_COMMAND: ${{ inputs.run_command }}
+        run: |
+          set -euo pipefail
+          # Static binary lives inside app/ (built by the AI's build commands
+          # with CGO_ENABLED=0); no interpreter ships.
+          rm -rf bundle && mkdir -p bundle/app bundle/runtime
+          cp -r project/. bundle/app/
+          rm -rf bundle/app/.git
+          jq -n \
+            --arg language "go" \
+            --arg run_command "$RUN_COMMAND" \
+            '{language: $language, run_command: $run_command, toolchain: {go: "1.27"}, created: now | todate}' \
+            > bundle/entry.json
+          (cd bundle && zip -qr ../bundle.zip runtime app entry.json)
+          sha256sum bundle.zip | awk '{print $1}' > bundle.sha256
+          stat -c%s bundle.zip > bundle.size
+          echo "Bundle: $(cat bundle.size) bytes, sha $(cat bundle.sha256)"
+
+      - name: Bundle cpp/c runtime
+        id: bundle-cpp
+        if: ${{ success() && (steps.detect.outputs.ecosystem == 'cpp' || steps.detect.outputs.ecosystem == 'c') }}
+        env:
+          RUN_COMMAND: ${{ inputs.run_command }}
+          ECOSYSTEM: ${{ steps.detect.outputs.ecosystem }}
+        run: |
+          set -euo pipefail
+          # Same shape as go: the compiled binary is inside app/.
+          rm -rf bundle && mkdir -p bundle/app bundle/runtime
+          cp -r project/. bundle/app/
+          rm -rf bundle/app/.git
+          jq -n \
+            --arg language "$ECOSYSTEM" \
+            --arg run_command "$RUN_COMMAND" \
+            '{language: $language, run_command: $run_command, toolchain: {cc: "musl-native"}, created: now | todate}' \
+            > bundle/entry.json
+          (cd bundle && zip -qr ../bundle.zip runtime app entry.json)
+          sha256sum bundle.zip | awk '{print $1}' > bundle.sha256
+          stat -c%s bundle.zip > bundle.size
+          echo "Bundle: $(cat bundle.size) bytes, sha $(cat bundle.sha256)"
+
+      - name: Bundle rust runtime
+        id: bundle-rust
+        if: ${{ success() && steps.detect.outputs.ecosystem == 'rust' }}
+        env:
+          RUN_COMMAND: ${{ inputs.run_command }}
+        run: |
+          set -euo pipefail
+          # target/ is huge: ship sources plus the release binaries only.
+          rm -rf bundle && mkdir -p bundle/app bundle/app/bin bundle/runtime
+          cp -r project/. bundle/app/
+          rm -rf bundle/app/.git bundle/app/target
+          if [ -d project/target/release ]; then
+            find project/target/release -maxdepth 1 -type f -executable \
+              -exec cp {} bundle/app/bin/ \;
+          fi
+          jq -n \
+            --arg language "rust" \
+            --arg run_command "$RUN_COMMAND" \
+            '{language: $language, run_command: $run_command, toolchain: {rust: "stable"}, created: now | todate}' \
+            > bundle/entry.json
+          (cd bundle && zip -qr ../bundle.zip runtime app entry.json)
+          sha256sum bundle.zip | awk '{print $1}' > bundle.sha256
+          stat -c%s bundle.zip > bundle.size
+          echo "Bundle: $(cat bundle.size) bytes, sha $(cat bundle.sha256)"
+
+      - name: Bundle java runtime
+        id: bundle-java
+        if: ${{ success() && steps.detect.outputs.ecosystem == 'java' }}
+        env:
+          RUN_COMMAND: ${{ inputs.run_command }}
+        run: |
+          set -euo pipefail
+          # Ship a JRE with the app: the sandbox has no Java of its own.
+          rm -rf bundle && mkdir -p bundle/app bundle/jre
+          cp -r project/. bundle/app/
+          rm -rf bundle/app/.git bundle/app/target bundle/app/build
+          find project -maxdepth 2 \( -path '*/target/*.jar' -o -path '*/build/libs/*.jar' -o -name '*.jar' \) -type f \
+            -exec cp {} bundle/app/ \; 2>/dev/null || true
+          curl -fsSL --retry 3 --retry-delay 2 \
+            "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jre/hotspot/normal/eclipse" \
+            -o jre.tar.gz
+          tar -xzf jre.tar.gz -C bundle/jre --strip-components=1
+          JAVA_VERSION="$(bundle/jre/bin/java -version 2>&1 | head -1)"
+          jq -n \
+            --arg language "java" \
+            --arg run_command "$RUN_COMMAND" \
+            --arg java "$JAVA_VERSION" \
+            '{language: $language, run_command: $run_command, toolchain: {java: $java}, created: now | todate}' \
+            > bundle/entry.json
+          (cd bundle && zip -qr ../bundle.zip jre app entry.json)
+          sha256sum bundle.zip | awk '{print $1}' > bundle.sha256
+          stat -c%s bundle.zip > bundle.size
+          echo "Bundle: $(cat bundle.size) bytes, sha $(cat bundle.sha256)"
+
+      - name: Bundle ruby runtime
+        id: bundle-ruby
+        if: ${{ success() && steps.detect.outputs.ecosystem == 'ruby' }}
+        env:
+          RUN_COMMAND: ${{ inputs.run_command }}
+        run: |
+          set -euo pipefail
+          # Ship the interpreter setup-ruby installed: the sandbox has none.
+          rm -rf bundle && mkdir -p bundle/app bundle/ruby
+          cp -r project/. bundle/app/
+          rm -rf bundle/app/.git
+          RUBY_PREFIX="$(dirname "$(dirname "$(command -v ruby)")")"
+          cp -r "$RUBY_PREFIX/." bundle/ruby/
+          jq -n \
+            --arg language "ruby" \
+            --arg run_command "$RUN_COMMAND" \
+            '{language: $language, run_command: $run_command, toolchain: {ruby: "3.4"}, created: now | todate}' \
+            > bundle/entry.json
+          (cd bundle && zip -qr ../bundle.zip ruby app entry.json)
+          sha256sum bundle.zip | awk '{print $1}' > bundle.sha256
+          stat -c%s bundle.zip > bundle.size
+          echo "Bundle: $(cat bundle.size) bytes, sha $(cat bundle.sha256)"
+
+      - name: Bundle elixir runtime
+        id: bundle-elixir
+        if: ${{ success() && steps.detect.outputs.ecosystem == 'elixir' }}
+        env:
+          RUN_COMMAND: ${{ inputs.run_command }}
+        run: |
+          set -euo pipefail
+          # Prefer an OTP release (erts included, self-booting); fall back to
+          # the full app dir when the AI did not cut one.
+          rm -rf bundle && mkdir -p bundle/app bundle/release
+          cp -r project/. bundle/app/
+          rm -rf bundle/app/.git bundle/app/_build bundle/app/deps
+          if [ -d project/_build/prod/rel ]; then
+            cp -r project/_build/prod/rel/. bundle/release/
+          fi
+          jq -n \
+            --arg language "elixir" \
+            --arg run_command "$RUN_COMMAND" \
+            '{language: $language, run_command: $run_command, toolchain: {elixir: "1.18", otp: "27"}, created: now | todate}' \
+            > bundle/entry.json
+          (cd bundle && zip -qr ../bundle.zip release app entry.json)
+          sha256sum bundle.zip | awk '{print $1}' > bundle.sha256
+          stat -c%s bundle.zip > bundle.size
+          echo "Bundle: $(cat bundle.size) bytes, sha $(cat bundle.sha256)"
+
+      - name: Upload runtime bundle
+        if: ${{ success() && hashFiles('bundle.zip') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ inputs.build_id }}
+          path: |
+            bundle.zip
+            bundle.sha256
+            bundle.size
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Deliver bundle to control plane
+        if: ${{ success() && hashFiles('bundle.zip') != '' }}
+        env:
+          BUILD_ID: ${{ inputs.build_id }}
+          REPORT_TOKEN: ${{ secrets.BUILD_REPORT_TOKEN }}
+          REPORT_URL: ${{ vars.PLATFORM_API_URL }}
+        run: |
+          set -euo pipefail
+          # The sandbox fetches the bundle from platform storage, not from GH
+          # artifacts. Best-effort: without it the runtime falls back to the
+          # source archive, so a delivery failure warns instead of failing.
+          if [ -z "$REPORT_TOKEN" ] || [ -z "$REPORT_URL" ]; then
+            echo "::notice::No report credentials, skipping bundle delivery"
+            exit 0
+          fi
+          if curl -fsS --retry 3 --retry-delay 2 \
+            -X POST "$REPORT_URL/api/v1/builds/$BUILD_ID/bundle" \
+            -H "x-build-report-token: $REPORT_TOKEN" \
+            -F "file=@bundle.zip;type=application/zip" > /dev/null; then
+            echo "Delivered runtime bundle to the control plane."
+          else
+            echo "::warning::Could not deliver the bundle; runtimes will use the source archive."
+          fi
 
       - name: Package build output
         if: always()

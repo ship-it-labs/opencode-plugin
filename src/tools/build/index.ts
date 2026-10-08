@@ -2,6 +2,11 @@ import { tool } from "@opencode-ai/plugin";
 import type { SessionState } from "../../core/state/session.js";
 import type { ToolRegistry } from "../types.js";
 import { ApiError, TransportError } from "../../core/api/errors.js";
+import {
+  LANGUAGES,
+  LANGUAGE_ARG_DESCRIPTION,
+  BUILD_ENV_ARG_DESCRIPTION,
+} from "../languages.js";
 
 export function formatError(err: unknown): string {
   if (err instanceof ApiError) {
@@ -47,6 +52,17 @@ const submitBuild = tool({
         .array(tool.schema.string())
         .optional()
         .describe("Test commands, e.g. ['npm test']"),
+      language: tool.schema
+        .enum(LANGUAGES)
+        .optional()
+        .describe(
+          LANGUAGE_ARG_DESCRIPTION +
+            " Overrides the project's language for this build only."
+        ),
+      env: tool.schema
+        .record(tool.schema.string(), tool.schema.string())
+        .optional()
+        .describe(BUILD_ENV_ARG_DESCRIPTION),
     },
     async execute(args) {
       const total =
@@ -64,6 +80,8 @@ const submitBuild = tool({
           install_commands: args.install_commands ?? [],
           build_commands: args.build_commands ?? [],
           test_commands: args.test_commands ?? [],
+          ...(args.language ? { language: args.language } : {}),
+          ...(args.env ? { env: args.env } : {}),
         });
         state.trackBuild(result);
         return `Build ${result.build_id} accepted with status ${result.status}. Poll build_status for the outcome, then read build_logs if it failed.`;

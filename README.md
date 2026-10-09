@@ -28,8 +28,8 @@ The plugin reads the key from `SHIPIT_API_KEY` first and falls back to that
 file, because launchers do not always forward custom environment variables to
 plugins. The key is only ever shown in full at creation time, so copy it then.
 
-Set `SHIPIT_CONTROL_PLANE_URL` if your control plane is not on
-`http://localhost:3000`.
+Set `SHIPIT_CONTROL_PLANE_URL` only for local development
+(`http://localhost:3000`); by default the plugin talks to production.
 
 ## Tools
 

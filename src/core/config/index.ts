@@ -15,7 +15,9 @@ export const API_KEY_ENV = "SHIPIT_API_KEY";
 export const API_KEY_FILE = "SHIPIT_API_KEY_FILE";
 
 const DEFAULTS = {
-  controlPlaneUrl: "http://localhost:3000",
+  // Production control plane. Local development overrides with
+  // SHIPIT_CONTROL_PLANE_URL=http://localhost:3000.
+  controlPlaneUrl: "https://ship-it-fri1.onrender.com",
   requestTimeoutMs: 30_000,
   maxReconnectAttempts: 10,
   reconnectBaseDelayMs: 1_000,

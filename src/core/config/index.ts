@@ -29,6 +29,11 @@ const DEFAULTS = {
  * 3. A key file: SHIPIT_API_KEY_FILE, or ~/.config/opencode/shipit.key by
  *    default. This is the most reliable option on machines where the launcher
  *    does not forward custom environment variables to plugins.
+ *
+ * Every source is trimmed and must look like a key (ox_live_/ox_test_
+ * prefix). A pasted key with trailing whitespace or quotes, or an empty
+ * variable shadowing the file, falls through to the next source instead of
+ * authenticating as garbage and 401ing with "valid" credentials.
  */
 export function loadConfig(overrides: Partial<PluginConfig> = {}): PluginConfig {
   const controlPlaneUrl =
@@ -37,7 +42,9 @@ export function loadConfig(overrides: Partial<PluginConfig> = {}): PluginConfig 
     DEFAULTS.controlPlaneUrl;
 
   const apiKey =
-    overrides.apiKey ?? process.env[API_KEY_ENV] ?? readKeyFile();
+    normalizeKey(overrides.apiKey) ??
+    normalizeKey(process.env[API_KEY_ENV]) ??
+    readKeyFile();
 
   return {
     controlPlaneUrl: controlPlaneUrl.replace(/\/+$/, ""),
@@ -46,6 +53,18 @@ export function loadConfig(overrides: Partial<PluginConfig> = {}): PluginConfig 
     maxReconnectAttempts: overrides.maxReconnectAttempts ?? DEFAULTS.maxReconnectAttempts,
     reconnectBaseDelayMs: overrides.reconnectBaseDelayMs ?? DEFAULTS.reconnectBaseDelayMs,
   };
+}
+
+/** Trims pasted keys and rejects anything that cannot be an account key. */
+export function normalizeKey(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  // Strip surrounding whitespace and the quotes launchers and .env files
+  // love to leave behind.
+  const key = value.trim().replace(/^["']|["']$/g, "").trim();
+  if (key.startsWith("ox_live_") || key.startsWith("ox_test_")) {
+    return key;
+  }
+  return undefined;
 }
 
 function readKeyFile(): string | undefined {
@@ -60,10 +79,8 @@ function readKeyFile(): string | undefined {
   for (const candidate of candidates) {
     try {
       if (!fs.existsSync(candidate)) continue;
-      const content = fs.readFileSync(candidate, "utf8").trim();
-      if (content.startsWith("ox_live_") || content.startsWith("ox_test_")) {
-        return content;
-      }
+      const key = normalizeKey(fs.readFileSync(candidate, "utf8"));
+      if (key) return key;
     } catch {
       continue;
     }

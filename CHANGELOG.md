@@ -1,6 +1,13 @@
 # Changelog
 
-## 1.1.0
+## 1.2.0
+
+- Browser OAuth login: `npx opencode-shipit-runtime login` and the new
+  `shipit_login` tool (loopback server + PKCE, token stored automatically).
+- `project_upload` and `build_submit` accept `language` (node, python, go,
+  cpp, c, rust, java, ruby, elixir) and `env` (runtime vs build-time).
+- Control plane defaults to production; localhost is opt-in.
+- Key sources are trimmed and validated, with fallthrough instead of 401s.
 
 - `project_upload` accepts `language` (node, python, go, cpp, c, rust, java,
   ruby, elixir) and `env` (runtime environment, stored encrypted server-side).

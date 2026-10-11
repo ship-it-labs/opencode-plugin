@@ -10,7 +10,12 @@ import {
 
 export function formatError(err: unknown): string {
   if (err instanceof ApiError) {
-    return `Control plane rejected the request (${err.code}, HTTP ${err.status}): ${err.message}`;
+    const base = `Control plane rejected the request (${err.code}, HTTP ${err.status}): ${err.message}`;
+    // A rejected credential never heals itself: point at the reconnect
+    // instead of letting the model retry the same dead key.
+    return err.isAuthError
+      ? `${base} Reconnect with the shipit_login tool (or \`npx -y opencode-shipit-runtime login\`).`
+      : base;
   }
   if (err instanceof TransportError) {
     return `${err.message} Tools will keep working once the connection is restored.`;

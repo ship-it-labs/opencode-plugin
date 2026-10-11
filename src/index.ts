@@ -80,7 +80,7 @@ export const ShipItRuntimePlugin: Plugin = async (ctx) => {
     safeLog(
       ctx,
       "error",
-      `Could not verify API key against ${config.controlPlaneUrl}. Tools are registered but calls will fail until the control plane is reachable.`,
+      `Could not verify credentials against ${config.controlPlaneUrl}. Run the shipit_login tool (or \`npx -y opencode-shipit-runtime login\`) to reconnect; tools will fail until then.`,
       { error: err instanceof Error ? err.message : String(err) }
     );
   }

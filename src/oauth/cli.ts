@@ -17,7 +17,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   const openBrowser = !argv.includes("--no-browser");
 
   try {
-    const result = await runOAuthLogin({ controlPlaneUrl, port, keyPath, openBrowser });
+    const result = await runOAuthLogin({
+      controlPlaneUrl,
+      port,
+      keyPath,
+      openBrowser,
+      onAuthorizeUrl: (url) => {
+        console.log("If the browser did not open, visit this URL:");
+        console.log(url);
+      },
+    });
     console.log("Ship-It connected.");
     console.log(`Access token stored in ${result.keyPath}`);
     console.log("Restart OpenCode so every tool picks up the new credentials.");

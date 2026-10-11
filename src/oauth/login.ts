@@ -111,10 +111,15 @@ export function writeKeyFile(keyPath: string, apiKey: string): void {
 export function openBrowser(url: string): void {
   try {
     const platform = process.platform;
-    const command =
-      platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
+    // NOTE (Windows): the URL must be double-quoted. cmd.exe splits an
+    // unquoted URL on & into separate commands, so the browser would receive
+    // only ?client_id=... and the authorize page would report the rest
+    // missing. The empty title ("") stays: without it start() eats the URL.
     const args =
-      platform === "win32" ? ["/c", "start", "", url] : platform === "darwin" ? [url] : [url];
+      platform === "win32"
+        ? ["/c", "start", "", `"${url}"`]
+        : [url];
+    const command = platform === "win32" ? "cmd" : platform === "darwin" ? "open" : "xdg-open";
     const child = spawn(command, args, { detached: true, stdio: "ignore" });
     child.unref();
   } catch {
@@ -129,11 +134,14 @@ export interface OAuthLoginOptions {
   timeoutMs?: number;
   keyPath?: string;
   openBrowser?: boolean;
+  /** Called with the authorize URL (also opened automatically unless disabled). */
+  onAuthorizeUrl?: (url: string) => void;
 }
 
 export interface OAuthLoginResult {
   apiKey: string;
   keyPath: string;
+  authorizeUrl: string;
 }
 
 function successPage(): string {
@@ -172,6 +180,11 @@ export async function runOAuthLogin(options: OAuthLoginOptions): Promise<OAuthLo
   const { server, port } = await listenLoopback(options.port);
   const redirectUri = `http://127.0.0.1:${port}${CALLBACK_PATH}`;
   const authorizeUrl = buildAuthorizeUrl(baseUrl, { redirectUri, state, challenge });
+  try {
+    options.onAuthorizeUrl?.(authorizeUrl);
+  } catch {
+    // Reporting hook only; a throwing hook must not kill the login.
+  }
   if (options.openBrowser !== false) {
     openBrowser(authorizeUrl);
   }
@@ -213,7 +226,7 @@ export async function runOAuthLogin(options: OAuthLoginOptions): Promise<OAuthLo
   }
 
   writeKeyFile(keyPath, token.access_token);
-  return { apiKey: token.access_token, keyPath };
+  return { apiKey: token.access_token, keyPath, authorizeUrl };
 }
 
 async function waitForCallback(

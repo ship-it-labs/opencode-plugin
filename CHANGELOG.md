@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1
+
+- Fix Windows browser open: quote the authorize URL so `cmd.exe` no longer
+  splits it on `&` (which dropped every parameter but `client_id`), and print
+  the URL as a copy-paste fallback.
+
 ## 1.2.0
 
 - Browser OAuth login: `npx opencode-shipit-runtime login` and the new

@@ -1,10 +1,11 @@
 # Changelog
 
-## 1.3.0
+## 1.2.3
 
-- Login now adds the plugin to `opencode.jsonc` (or `opencode.json`)
-  automatically: one command connects end to end, then restart OpenCode.
+- Login adds the plugin to `opencode.jsonc` (or `opencode.json`) automatically:
+  one command connects end to end, then restart OpenCode.
 - Connecting docs collapsed to the single login flow everywhere.
+- 401s point at reconnecting via login instead of dying cryptically.
 
 ## 1.2.1
 

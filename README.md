@@ -1,6 +1,6 @@
 # OpenCode Plugin
 
-Exposes the Ship-It platform's build, runtime, artifact, filesystem, network and usage capabilities to the AI as OpenCode tools. The plugin is the only interface the AI uses, and it authenticates with a single account API key.
+Exposes the Ship-It platform's build, runtime, artifact, filesystem, network and usage capabilities to the AI as OpenCode tools. The plugin is the only interface the AI uses, and it authenticates with an access token obtained through a browser login.
 
 ## Install
 
@@ -17,27 +17,45 @@ Install from npm and restart OpenCode:
 npm install -g opencode-shipit-runtime
 ```
 
-Then give the plugin your account key. Create one in the website dashboard
-under API keys, and write it to `~/.config/opencode/shipit.key`:
+## Connect (OAuth login)
+
+No API keys to copy. Run the login, approve in the browser that opens, and
+the access token is stored for you:
 
 ```bash
-echo "ox_live_xxxxxxxxxxxxxxxxx" > ~/.config/opencode/shipit.key
+npx opencode-shipit-runtime login
 ```
 
-The plugin reads the key from `SHIPIT_API_KEY` first and falls back to that
-file, because launchers do not always forward custom environment variables to
-plugins. The key is only ever shown in full at creation time, so copy it then.
+What happens: the login starts a temporary server on your own machine,
+opens the Ship-It authorize page (sign in first if needed), and on approval
+exchanges a one-time code plus a PKCE proof for an access token. The token is
+written to `~/.config/opencode/shipit.key`. Restart OpenCode afterwards so
+every tool picks it up. Inside an agent session, the `shipit_login` tool does
+the same thing.
+
+For headless or automated setups, set `SHIPIT_API_KEY` in the environment
+OpenCode starts with (use a token from a machine where you ran the login
+once). The plugin reads the environment first and falls back to the key file,
+because launchers do not always forward custom environment variables to
+plugins. Revoke access any time from the dashboard under Settings, Connected
+apps.
 
 Set `SHIPIT_CONTROL_PLANE_URL` only for local development
 (`http://localhost:3000`); by default the plugin talks to production.
 
 ## Tools
 
+### Auth
+
+| Tool | Purpose |
+| --- | --- |
+| `shipit_login` | Browser OAuth login; stores the access token, no key needed |
+
 ### Project
 
 | Tool | Purpose |
 | --- | --- |
-| `project_upload` | Archive the project and upload it so it can be built |
+| `project_upload` | Archive the project and upload it so it can be built (`language` + `env` supported) |
 
 `project_upload` is the first step of any build. It walks the project directory,
 skips dependency caches and build output, writes a ZIP, and uploads it. The
@@ -55,7 +73,7 @@ contains absolute paths from another machine that would break the build.
 
 | Tool | Purpose |
 | --- | --- |
-| `build_submit` | Submit install/build/test commands to GitHub Actions |
+| `build_submit` | Submit install/build/test commands to GitHub Actions (`language` + `env` supported) |
 | `build_status` | Poll build status and exit code |
 | `build_logs` | Read stdout and stderr from a build |
 | `build_list` | List recent builds |
@@ -69,7 +87,7 @@ contains absolute paths from another machine that would break the build.
 | `runtime_restart` | Restart a runtime in place |
 | `runtime_status` | Status, app URL, lease expiry |
 | `runtime_list` | Recent runtime sessions |
-| `runtime_logs` | Container stdout/stderr |
+| `runtime_logs` | Sandbox stdout/stderr |
 | `runtime_info` | Sandbox metadata |
 | `runtime_health` | Liveness check |
 | `runtime_exec` | Run a shell command inside the sandbox |

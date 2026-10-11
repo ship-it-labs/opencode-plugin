@@ -14,6 +14,11 @@ export const CONTROL_PLANE_ENV = "SHIPIT_CONTROL_PLANE_URL";
 export const API_KEY_ENV = "SHIPIT_API_KEY";
 export const API_KEY_FILE = "SHIPIT_API_KEY_FILE";
 
+/** Default key file, shared by the resolver below and the OAuth login flow. */
+export function defaultKeyPath(): string {
+  return path.join(os.homedir(), ".config", "opencode", "shipit.key");
+}
+
 const DEFAULTS = {
   // Production control plane. Local development overrides with
   // SHIPIT_CONTROL_PLANE_URL=http://localhost:3000.
@@ -74,7 +79,7 @@ function readKeyFile(): string | undefined {
   const candidates = configured
     ? [configured]
     : [
-        path.join(os.homedir(), ".config", "opencode", "shipit.key"),
+        defaultKeyPath(),
         path.join(os.homedir(), ".config", "opencode", "shipit-key.txt"),
       ];
 
@@ -99,9 +104,10 @@ export function keySourcesTried(): string[] {
 export class MissingCredentialsError extends Error {
   constructor() {
     super(
-      `No Ship-It API key found. Tried ${keySourcesTried().join(" and ")}. ` +
-        `Create a key in the dashboard, then either set ${API_KEY_ENV} in the ` +
-        `environment OpenCode starts with, or write the key to the key file.`
+      `No Ship-It credentials found. Tried ${keySourcesTried().join(" and ")}. ` +
+        `Run the shipit_login tool (or \`npx opencode-shipit-runtime login\`) to ` +
+        `connect with a browser login, or set ${API_KEY_ENV} in the ` +
+        `environment OpenCode starts with.`
     );
     this.name = "MissingCredentialsError";
   }

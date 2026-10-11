@@ -8,6 +8,7 @@ import { createFilesystemTools } from "./tools/runtime/filesystem.js";
 import { createUsageTools } from "./tools/usage/index.js";
 import { createArtifactTools } from "./tools/artifact/index.js";
 import { createProjectTools } from "./tools/project/index.js";
+import { createAuthTools } from "./tools/auth/index.js";
 
 /**
  * Best-effort structured logging. If the host client does not expose
@@ -44,6 +45,7 @@ export const ShipItRuntimePlugin: Plugin = async (ctx) => {
   const auth = new AuthContext(config, state);
 
   const tools = {
+    ...createAuthTools(state, config.controlPlaneUrl),
     ...createBuildTools(state),
     ...createRuntimeTools(state),
     ...createFilesystemTools(state),
@@ -56,7 +58,7 @@ export const ShipItRuntimePlugin: Plugin = async (ctx) => {
     safeLog(
       ctx,
       "warn",
-      "Ship-It runtime tools are registered but disabled: no API key configured. Set SHIPIT_API_KEY to enable them."
+      "Ship-It runtime tools are registered but disabled: no credentials configured. Run the shipit_login tool (or `npx opencode-shipit-runtime login`) to connect."
     );
     return { tool: tools };
   }

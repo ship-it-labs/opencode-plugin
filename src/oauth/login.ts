@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { defaultKeyPath as configKeyPath } from "../core/config/index.js";
@@ -96,6 +97,70 @@ export function defaultKeyPath(): string {
   return configKeyPath();
 }
 
+export const PLUGIN_PACKAGE_NAME = "opencode-shipit-runtime";
+
+export interface PluginConfigResult {
+  /** File written or found. */
+  file: string;
+  /** True when the entry was added; false when already present. */
+  added: boolean;
+}
+
+/**
+ * Ensures the plugin is listed in the OpenCode config so a restart picks it
+ * up — the login would otherwise strand the user with a token and no plugin.
+ * Prefers opencode.jsonc, falls back to opencode.json, creates jsonc when
+ * neither exists. Edits textually (regex on the plugin array) so comments
+ * elsewhere in the file survive; JSON parsing is never attempted, so a
+ * comment-heavy config cannot break this.
+ */
+export function ensurePluginConfiguredIn(configDir: string): PluginConfigResult {
+  const jsonc = path.join(configDir, "opencode.jsonc");
+  const json = path.join(configDir, "opencode.json");
+  const file = fs.existsSync(jsonc) ? jsonc : fs.existsSync(json) ? json : jsonc;
+
+  if (!fs.existsSync(file)) {
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      file,
+      `{\n  "$schema": "https://opencode.ai/config.json",\n  "plugin": ["${PLUGIN_PACKAGE_NAME}"]\n}\n`
+    );
+    return { file, added: true };
+  }
+
+  const text = fs.readFileSync(file, "utf8");
+  if (text.includes(PLUGIN_PACKAGE_NAME)) {
+    return { file, added: false };
+  }
+
+  const arrayMatch = /"plugin"\s*:\s*\[/.exec(text);
+  let updated: string;
+  if (arrayMatch) {
+    const insertAt = arrayMatch.index + arrayMatch[0].length;
+    const rest = text.slice(insertAt);
+    // Empty array needs no trailing comma; a bare `["x",]` would be invalid
+    // strict JSON for opencode.json readers.
+    const prefix = /^\s*\]/.test(rest) ? `"${PLUGIN_PACKAGE_NAME}"` : `"${PLUGIN_PACKAGE_NAME}", `;
+    updated = text.slice(0, insertAt) + prefix + rest;
+  } else {
+    const brace = text.indexOf("{");
+    if (brace === -1) {
+      throw new OAuthLoginError(
+        "CONFIG_UPDATE_FAILED",
+        `Could not find where to add the plugin in ${file}. Add "${PLUGIN_PACKAGE_NAME}" to its plugin list by hand.`
+      );
+    }
+    updated = `${text.slice(0, brace + 1)}\n  "plugin": ["${PLUGIN_PACKAGE_NAME}"],${text.slice(brace + 1)}`;
+  }
+  fs.writeFileSync(file, updated);
+  return { file, added: true };
+}
+
+/** Ensures the plugin entry in the default OpenCode config dir. */
+export function ensurePluginConfigured(): PluginConfigResult {
+  return ensurePluginConfiguredIn(path.join(os.homedir(), ".config", "opencode"));
+}
+
 /** Stores the token with owner-only permissions; creates parent dirs. */
 export function writeKeyFile(keyPath: string, apiKey: string): void {
   fs.mkdirSync(path.dirname(keyPath), { recursive: true });
@@ -111,16 +176,17 @@ export function writeKeyFile(keyPath: string, apiKey: string): void {
 export function openBrowser(url: string): void {
   try {
     const platform = process.platform;
-    // NOTE (Windows): the URL must be double-quoted. cmd.exe splits an
-    // unquoted URL on & into separate commands, so the browser would receive
-    // only ?client_id=... and the authorize page would report the rest
-    // missing. The empty title ("") stays: without it start() eats the URL.
-    const args =
+    // Windows deliberately avoids cmd.exe: its parser splits an unquoted URL
+    // on & (dropping every parameter but the first) and mangles quoted ones
+    // into "Windows cannot find" dialogs. rundll32 takes the URL as a single
+    // argv element, so & and ? pass through untouched.
+    const [command, args] =
       platform === "win32"
-        ? ["/c", "start", "", `"${url}"`]
-        : [url];
-    const command = platform === "win32" ? "cmd" : platform === "darwin" ? "open" : "xdg-open";
-    const child = spawn(command, args, { detached: true, stdio: "ignore" });
+        ? (["rundll32", ["url.dll,FileProtocolHandler", url]] as const)
+        : platform === "darwin"
+          ? (["open", [url]] as const)
+          : (["xdg-open", [url]] as const);
+    const child = spawn(command, [...args], { detached: true, stdio: "ignore" });
     child.unref();
   } catch {
     // The URL is always returned alongside, so a failed open is directions,

@@ -19,8 +19,9 @@ npm install -g opencode-shipit-runtime
 
 ## Connect (OAuth login)
 
-No API keys to copy. Run the login, approve in the browser that opens, and
-the access token is stored for you:
+No API keys to copy. Run the login — it opens a browser page where you
+approve, stores the access token, and adds the plugin to your OpenCode
+config. Then restart OpenCode:
 
 ```bash
 npx opencode-shipit-runtime login
@@ -29,19 +30,10 @@ npx opencode-shipit-runtime login
 What happens: the login starts a temporary server on your own machine,
 opens the Ship-It authorize page (sign in first if needed), and on approval
 exchanges a one-time code plus a PKCE proof for an access token. The token is
-written to `~/.config/opencode/shipit.key`. Restart OpenCode afterwards so
-every tool picks it up. Inside an agent session, the `shipit_login` tool does
-the same thing.
-
-For headless or automated setups, set `SHIPIT_API_KEY` in the environment
-OpenCode starts with (use a token from a machine where you ran the login
-once). The plugin reads the environment first and falls back to the key file,
-because launchers do not always forward custom environment variables to
-plugins. Revoke access any time from the dashboard under Settings, Connected
-apps.
-
-Set `SHIPIT_CONTROL_PLANE_URL` only for local development
-(`http://localhost:3000`); by default the plugin talks to production.
+written to `~/.config/opencode/shipit.key`, and the plugin entry is added to
+`opencode.jsonc` (or `opencode.json`) automatically. Inside an agent session,
+the `shipit_login` tool does the same thing. Revoke access any time from the
+dashboard under Settings, Connected apps.
 
 ## Tools
 

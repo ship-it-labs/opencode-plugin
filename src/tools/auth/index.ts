@@ -2,7 +2,7 @@ import { tool } from "@opencode-ai/plugin";
 import type { SessionState } from "../../core/state/session.js";
 import type { ToolRegistry } from "../types.js";
 import { formatError } from "../build/index.js";
-import { runOAuthLogin, OAuthLoginError } from "../../oauth/login.js";
+import { runOAuthLogin, ensurePluginConfigured, OAuthLoginError } from "../../oauth/login.js";
 
 export function createAuthTools(state: SessionState, controlPlaneUrl: string): ToolRegistry {
   void state;
@@ -20,11 +20,24 @@ export function createAuthTools(state: SessionState, controlPlaneUrl: string): T
     async execute() {
       try {
         const result = await runOAuthLogin({ controlPlaneUrl });
-        return [
+        const lines = [
           "Ship-It connected.",
           `Access token stored in ${result.keyPath}.`,
-          "Restart OpenCode so every tool picks up the new credentials.",
-        ].join("\n");
+        ];
+        try {
+          const configured = ensurePluginConfigured();
+          lines.push(
+            configured.added
+              ? `Added the plugin to ${configured.file}.`
+              : `Plugin already listed in ${configured.file}.`
+          );
+        } catch (err) {
+          lines.push(
+            `Could not update the OpenCode config automatically: ${err instanceof Error ? err.message : err}`
+          );
+        }
+        lines.push("Restart OpenCode so every tool picks up the new credentials.");
+        return lines.join("\n");
       } catch (err) {
         if (err instanceof OAuthLoginError) {
           return `Login failed (${err.code}): ${err.message}`;

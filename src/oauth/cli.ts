@@ -1,4 +1,4 @@
-import { runOAuthLogin, OAuthLoginError } from "./login.js";
+import { runOAuthLogin, ensurePluginConfigured, OAuthLoginError } from "./login.js";
 
 /**
  * `shipit-login` (also runnable as `npx opencode-shipit-runtime login`):
@@ -28,7 +28,20 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       },
     });
     console.log("Ship-It connected.");
-    console.log(`Access token stored in ${result.keyPath}`);
+    console.log(`Access token stored.`);
+    try {
+      const configured = ensurePluginConfigured();
+      console.log(
+        configured.added
+          ? `Added the plugin to ${configured.file}.`
+          : `Plugin already listed in ${configured.file}.`
+      );
+    } catch (err) {
+      // Token is stored; a config edit failure must not fail the login.
+      console.log(
+        `Could not update the OpenCode config automatically: ${err instanceof Error ? err.message : err}`
+      );
+    }
     console.log("Restart OpenCode so every tool picks up the new credentials.");
   } catch (err) {
     if (err instanceof OAuthLoginError) {

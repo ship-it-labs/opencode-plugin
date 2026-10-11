@@ -8,6 +8,7 @@ import {
   buildAuthorizeUrl,
   parseCallbackUrl,
   writeKeyFile,
+  ensurePluginConfiguredIn,
   OAuthLoginError,
   OAUTH_CLIENT_ID,
 } from "../src/oauth/login.js";
@@ -98,5 +99,68 @@ describe("key file", () => {
     writeKeyFile(file, "ox_live_abc");
     const mode = fs.statSync(file).mode & 0o777;
     expect(mode).toBe(0o600);
+  });
+});
+
+describe("ensurePluginConfiguredIn", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "shipit-cfg-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("creates opencode.jsonc when nothing exists", () => {
+    const result = ensurePluginConfiguredIn(dir);
+    expect(result.added).toBe(true);
+    expect(result.file.endsWith("opencode.jsonc")).toBe(true);
+    expect(JSON.parse(fs.readFileSync(result.file, "utf8")).plugin).toEqual([
+      "opencode-shipit-runtime",
+    ]);
+  });
+
+  it("appends to an existing plugin array, comments intact", () => {
+    const file = path.join(dir, "opencode.jsonc");
+    fs.writeFileSync(
+      file,
+      '{\n  // keep me\n  "plugin": ["other-plugin"],\n  "env": {}\n}\n'
+    );
+    const result = ensurePluginConfiguredIn(dir);
+    expect(result.added).toBe(true);
+    const text = fs.readFileSync(file, "utf8");
+    expect(text).toContain("// keep me");
+    const stripped = text.replace(/\/\/.*$/gm, "");
+    expect(JSON.parse(stripped).plugin).toEqual(["opencode-shipit-runtime", "other-plugin"]);
+  });
+
+  it("skips when already listed", () => {
+    const file = path.join(dir, "opencode.jsonc");
+    fs.writeFileSync(file, '{ "plugin": ["opencode-shipit-runtime"] }\n');
+    const result = ensurePluginConfiguredIn(dir);
+    expect(result.added).toBe(false);
+  });
+
+  it("prefers jsonc but falls back to json", () => {
+    const file = path.join(dir, "opencode.json");
+    fs.writeFileSync(file, '{ "plugin": [] }\n');
+    const result = ensurePluginConfiguredIn(dir);
+    expect(result.added).toBe(true);
+    // Strict JSON must stay valid: no trailing comma in an empty array.
+    expect(JSON.parse(fs.readFileSync(result.file, "utf8")).plugin).toEqual([
+      "opencode-shipit-runtime",
+    ]);
+  });
+
+  it("adds a plugin key when none exists", () => {
+    const file = path.join(dir, "opencode.jsonc");
+    fs.writeFileSync(file, '{ "env": {} }\n');
+    const result = ensurePluginConfiguredIn(dir);
+    expect(result.added).toBe(true);
+    expect(JSON.parse(fs.readFileSync(result.file, "utf8")).plugin).toEqual([
+      "opencode-shipit-runtime",
+    ]);
   });
 });

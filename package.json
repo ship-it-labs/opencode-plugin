@@ -1,6 +1,6 @@
 {
   "name": "opencode-shipit-runtime",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "description": "OpenCode plugin exposing Ship-It build, runtime, artifact, filesystem and usage tools to the AI",
   "type": "module",
   "main": "dist/index.js",

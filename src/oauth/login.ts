@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -16,8 +15,10 @@ import { defaultKeyPath as configKeyPath } from "../core/config/index.js";
  *    the loopback server with a one-time code, which is verified against the
  *    state before anything else happens.
  * 4. Exchange the code (plus PKCE verifier) for an access token, shut the
- *    server down, and store the token in the key file with owner-only
- *    permissions — the same file the normal key resolution reads.
+ *    server down, and store the token in shipit.key — in the same directory
+ *    as the nearest opencode.jsonc/opencode.json (project first, global
+ *    ~/.config/opencode fallback) — with owner-only permissions. That file
+ *    is the single source of the bearer token every request sends.
  *
  * Redirects are loopback-only by construction (we listen on 127.0.0.1 and
  * hand that exact URL to the site), so a code can never land anywhere else.
@@ -93,8 +94,8 @@ export function parseCallbackUrl(rawUrl: string, expectedState: string): string 
   return code;
 }
 
-export function defaultKeyPath(): string {
-  return configKeyPath();
+export function defaultKeyPath(startDir?: string): string {
+  return configKeyPath(startDir);
 }
 
 export const PLUGIN_PACKAGE_NAME = "opencode-shipit-runtime";

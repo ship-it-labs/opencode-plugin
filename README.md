@@ -30,8 +30,10 @@ npx opencode-shipit-runtime login
 What happens: the login starts a temporary server on your own machine,
 opens the Ship-It authorize page (sign in first if needed), and on approval
 exchanges a one-time code plus a PKCE proof for an access token. The token is
-written to `~/.config/opencode/shipit.key`, and the plugin entry is added to
-`opencode.jsonc` (or `opencode.json`) automatically. Inside an agent session,
+written to `shipit.key` in the same directory as your `opencode.jsonc` (or
+`opencode.json`) — project config first, `~/.config/opencode/shipit.key` as the
+global fallback — and every request sends that file's contents as the Bearer
+token. No token environment variable is read. Inside an agent session,
 the `shipit_login` tool does the same thing. Revoke access any time from the
 dashboard under Settings, Connected apps.
 

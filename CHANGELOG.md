@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.7
+
+- The bearer token always comes from `shipit.key`, read live on every request.
+  The `SHIPIT_API_KEY` environment variable and the plugin `apiKey` option are
+  no longer read, so nothing can override the file.
+- `shipit.key` is resolved next to `opencode.jsonc`/`opencode.json` (nearest
+  project config first, `.opencode/` included), with
+  `~/.config/opencode/shipit.key` as the global fallback.
+
 ## 1.2.3
 
 - Login adds the plugin to `opencode.jsonc` (or `opencode.json`) automatically:

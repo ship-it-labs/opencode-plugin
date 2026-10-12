@@ -17,7 +17,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   const openBrowser = !argv.includes("--no-browser");
 
   try {
-    const result = await runOAuthLogin({
+    await runOAuthLogin({
       controlPlaneUrl,
       port,
       keyPath,
@@ -75,7 +75,7 @@ function printUsage(): void {
       "Options:",
       "  --control-plane URL   Control plane base URL (default: production)",
       "  --port N              Loopback callback port (default: first free 4567-4576)",
-      "  --key-file PATH       Where to store the token (default: ~/.config/opencode/shipit.key)",
+      "  --key-file PATH       Where to store the token (default: ./shipit.key next to opencode.jsonc/json, else ~/.config/opencode/shipit.key)",
       "  --no-browser          Print the authorize URL instead of opening it",
     ].join("\n")
   );

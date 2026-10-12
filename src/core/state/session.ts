@@ -96,10 +96,14 @@ export class SessionState {
     }
   }
 
-  connect(apiKey: string, controlPlaneUrl: string): void {
+  connect(apiKeyOrProvider: string | (() => string | undefined), controlPlaneUrl: string): void {
     if (this.socket && this.socket.readyState <= 1) {
       return;
     }
+
+    const resolveKey = typeof apiKeyOrProvider === "function" ? apiKeyOrProvider : () => apiKeyOrProvider;
+    const apiKey = resolveKey();
+    if (!apiKey) return;
 
     const wsUrl = controlPlaneUrl.replace(/^http/, "ws") + `/ws?token=${encodeURIComponent(apiKey)}`;
     const socket = new WebSocket(wsUrl);
@@ -115,7 +119,7 @@ export class SessionState {
 
     socket.addEventListener("close", () => {
       this.socket = null;
-      this.scheduleReconnect(apiKey, controlPlaneUrl);
+      this.scheduleReconnect(resolveKey, controlPlaneUrl);
     });
 
     socket.addEventListener("error", () => {
@@ -123,7 +127,7 @@ export class SessionState {
     });
   }
 
-  private scheduleReconnect(apiKey: string, controlPlaneUrl: string): void {
+  private scheduleReconnect(apiKeyOrProvider: string | (() => string | undefined), controlPlaneUrl: string): void {
     if (this.reconnectAttempts >= 10) {
       this.emit("disconnected", { reason: "reconnect limit reached" });
       return;
@@ -137,7 +141,7 @@ export class SessionState {
     }
 
     this.reconnectTimer = setTimeout(() => {
-      this.connect(apiKey, controlPlaneUrl);
+      this.connect(apiKeyOrProvider, controlPlaneUrl);
     }, delay);
   }
 

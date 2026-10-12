@@ -1,5 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { normalizeKey, loadConfig, API_KEY_ENV, API_KEY_FILE } from "../src/core/config/index.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  normalizeKey,
+  loadConfig,
+  API_KEY_FILE,
+  findOpencodeConfigDirs,
+  keyFileCandidates,
+  defaultKeyPath,
+  KEY_FILE_NAME,
+  type ConfigOverrides,
+} from "../src/core/config/index.js";
 
 describe("normalizeKey", () => {
   it("accepts clean keys", () => {
@@ -27,40 +39,110 @@ describe("normalizeKey", () => {
   });
 });
 
-describe("loadConfig key fallthrough", () => {
+describe("shipit.key next to opencode config", () => {
   const saved = { ...process.env };
+  let dir: string;
 
   beforeEach(() => {
-    delete process.env[API_KEY_ENV];
-    // Point the file lookup nowhere: the dev machine may hold a real key file,
-    // which would otherwise satisfy the fallthrough under test.
-    process.env[API_KEY_FILE] = "C:/nonexistent-shipit-test-dir/no-key-here.key";
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "shipit-cfg-"));
+    delete process.env[API_KEY_FILE];
+    // A stray SHIPIT_API_KEY in the dev environment must never authenticate.
+    delete process.env["SHIPIT_API_KEY"];
   });
 
   afterEach(() => {
     process.env = { ...saved };
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it("prefers a dirty env var, cleaned, over the file", () => {
-    process.env[API_KEY_ENV] = "  ox_live_fromenv\n";
-    expect(loadConfig({}).apiKey).toBe("ox_live_fromenv");
+  it("reads shipit.key from the same dir as opencode.jsonc", () => {
+    fs.writeFileSync(path.join(dir, "opencode.jsonc"), '{ "plugin": [] }\n');
+    fs.writeFileSync(path.join(dir, "shipit.key"), "ox_live_fromfile\n");
+    const config = loadConfig({}, { cwd: dir });
+    expect(config.apiKey).toBe("ox_live_fromfile");
+    expect(config.keyFile).toBe(path.join(dir, "shipit.key"));
   });
 
-  it("falls through an empty env var instead of authenticating as nothing", () => {
-    process.env[API_KEY_ENV] = "   ";
-    // No key file present in test env: resolves undefined, not "".
-    expect(loadConfig({}).apiKey).toBeUndefined();
+  it("reads shipit.key from the same dir as opencode.json", () => {
+    fs.writeFileSync(path.join(dir, "opencode.json"), '{ "plugin": [] }\n');
+    fs.writeFileSync(path.join(dir, "shipit.key"), "  ox_test_fromjson  \n");
+    expect(loadConfig({}, { cwd: dir }).apiKey).toBe("ox_test_fromjson");
   });
 
-  it("falls through a garbage env var instead of 401ing on it", () => {
-    process.env[API_KEY_ENV] = "definitely-not-a-key";
-    expect(loadConfig({}).apiKey).toBeUndefined();
+  it("reads shipit.key from a .opencode/ config dir", () => {
+    const sub = path.join(dir, ".opencode");
+    fs.mkdirSync(sub, { recursive: true });
+    fs.writeFileSync(path.join(sub, "opencode.json"), '{ "plugin": [] }\n');
+    fs.writeFileSync(path.join(sub, "shipit.key"), "ox_live_dotopencode\n");
+    expect(loadConfig({}, { cwd: dir }).apiKey).toBe("ox_live_dotopencode");
   });
 
-  it("prefers an explicit override, cleaned", () => {
-    process.env[API_KEY_ENV] = "ox_live_fromenv";
-    expect(loadConfig({ apiKey: "ox_live_override  " }).apiKey).toBe(
-      "ox_live_override"
+  it("prefers the nearest project config walking up", () => {
+    fs.writeFileSync(path.join(dir, "opencode.jsonc"), "{}\n");
+    fs.writeFileSync(path.join(dir, "shipit.key"), "ox_live_outer\n");
+    const inner = path.join(dir, "a", "b");
+    fs.mkdirSync(inner, { recursive: true });
+    fs.writeFileSync(path.join(inner, "opencode.jsonc"), "{}\n");
+    fs.writeFileSync(path.join(inner, "shipit.key"), "ox_live_inner\n");
+    expect(loadConfig({}, { cwd: inner }).apiKey).toBe("ox_live_inner");
+    expect(loadConfig({}, { cwd: inner }).keyFile).toBe(
+      path.join(inner, "shipit.key")
+    );
+  });
+
+  it("ignores the SHIPIT_API_KEY env var: file is the only source", () => {
+    fs.writeFileSync(path.join(dir, "opencode.jsonc"), "{}\n");
+    fs.writeFileSync(path.join(dir, "shipit.key"), "ox_live_filewins\n");
+    process.env["SHIPIT_API_KEY"] = "ox_live_fromenv";
+    expect(loadConfig({}, { cwd: dir }).apiKey).toBe("ox_live_filewins");
+  });
+
+  it("never authenticates from the SHIPIT_API_KEY env var alone", () => {
+    const empty = path.join(dir, "empty");
+    fs.mkdirSync(empty, { recursive: true });
+    process.env["SHIPIT_API_KEY"] = "ox_live_envonly";
+    const apiKey = loadConfig({}, { cwd: empty }).apiKey;
+    // Either undefined or a real global file key — but never the env value.
+    expect(apiKey).not.toBe("ox_live_envonly");
+  });
+
+  it("always uses shipit.key: an apiKey option cannot override it", () => {
+    fs.writeFileSync(path.join(dir, "opencode.jsonc"), "{}\n");
+    fs.writeFileSync(path.join(dir, "shipit.key"), "ox_live_fromfile\n");
+    const config = loadConfig(
+      { apiKey: "ox_live_override" } as unknown as ConfigOverrides,
+      { cwd: dir }
+    );
+    expect(config.apiKey).toBe("ox_live_fromfile");
+    expect(config.keyFile).toBe(path.join(dir, "shipit.key"));
+  });
+
+  it("honours SHIPIT_API_KEY_FILE as an explicit path override", () => {
+    const custom = path.join(dir, "custom.key");
+    fs.writeFileSync(custom, "ox_live_custom\n");
+    process.env[API_KEY_FILE] = custom;
+    expect(loadConfig({}, { cwd: dir }).apiKey).toBe("ox_live_custom");
+  });
+
+  it("findOpencodeConfigDirs lists nearest first", () => {
+    fs.writeFileSync(path.join(dir, "opencode.jsonc"), "{}\n");
+    const inner = path.join(dir, "sub");
+    fs.mkdirSync(inner, { recursive: true });
+    const dirs = findOpencodeConfigDirs(inner);
+    expect(dirs[0]).toBe(dir);
+  });
+
+  it("defaultKeyPath lands next to the project config", () => {
+    fs.writeFileSync(path.join(dir, "opencode.jsonc"), "{}\n");
+    expect(defaultKeyPath(dir)).toBe(path.join(dir, KEY_FILE_NAME));
+  });
+
+  it("keyFileCandidates includes project and global keys", () => {
+    fs.writeFileSync(path.join(dir, "opencode.jsonc"), "{}\n");
+    const candidates = keyFileCandidates(dir);
+    expect(candidates).toContain(path.join(dir, KEY_FILE_NAME));
+    expect(candidates[candidates.length - 1].endsWith("shipit-key.txt")).toBe(
+      true
     );
   });
 });

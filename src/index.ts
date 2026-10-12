@@ -1,5 +1,5 @@
 import type { Plugin } from "@opencode-ai/plugin";
-import { loadConfig, type PluginConfig } from "./core/config/index.js";
+import { loadConfig, type ConfigOverrides } from "./core/config/index.js";
 import { AuthContext } from "./core/auth/index.js";
 import { SessionState } from "./core/state/session.js";
 import { createBuildTools } from "./tools/build/index.js";
@@ -64,7 +64,8 @@ export const ShipItRuntimePlugin: Plugin = async (ctx) => {
   }
 
   try {
-    state.connect(config.apiKey!, config.controlPlaneUrl);
+    // Provider, not a snapshot: reconnects re-read shipit.key from disk.
+    state.connect(() => auth.currentKey(), config.controlPlaneUrl);
   } catch (err) {
     safeLog(ctx, "warn", "Realtime connection failed; tools still work.", {
       error: err instanceof Error ? err.message : String(err),
@@ -94,10 +95,10 @@ export const ShipItRuntimePlugin: Plugin = async (ctx) => {
   return { tool: tools };
 };
 
-function readConfigFromContext(ctx: unknown): Partial<PluginConfig> {
+function readConfigFromContext(ctx: unknown): ConfigOverrides {
   try {
     const container = (ctx as { container?: { config?: Record<string, unknown> } })?.container;
-    const raw = container?.config?.shipit as Partial<PluginConfig> | undefined;
+    const raw = container?.config?.shipit as Partial<ConfigOverrides> | undefined;
     return raw ?? {};
   } catch {
     return {};

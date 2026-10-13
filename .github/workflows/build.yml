@@ -94,7 +94,10 @@ jobs:
           SOURCE_SHA256: ${{ inputs.source_sha256 }}
         run: |
           set -euo pipefail
-          curl -fsSL --retry 3 --retry-delay 2 -o project.zip "$SOURCE_URL"
+          # This fetch is the build's front door: a cold control plane answering
+          # 502 here fails the whole build, so retry through the warm-up window.
+          curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 120 \
+            --retry-all-errors --retry-connrefused -o project.zip "$SOURCE_URL"
 
           if [ -n "$SOURCE_SHA256" ]; then
             actual="$(sha256sum project.zip | awk '{print $1}')"
@@ -561,7 +564,10 @@ jobs:
             echo "::notice::No report credentials, skipping bundle delivery"
             exit 0
           fi
-          if curl -fsS --retry 3 --retry-delay 2 \
+          # A cold or restarting control plane answers 502 for up to a minute,
+          # so retry long and hard before giving up on the bundle.
+          if curl -fsS --retry 8 --retry-delay 5 --retry-max-time 120 \
+            --retry-all-errors --retry-connrefused \
             -X POST "$REPORT_URL/api/v1/builds/$BUILD_ID/bundle" \
             -H "x-build-report-token: $REPORT_TOKEN" \
             -F "file=@bundle.zip;type=application/zip" > /dev/null; then
@@ -662,7 +668,8 @@ jobs:
               )
             }' > "$payload"
 
-          if curl -fsS --retry 3 --retry-delay 2 \
+          if curl -fsS --retry 8 --retry-delay 5 --retry-max-time 120 \
+            --retry-all-errors --retry-connrefused \
             -X POST "$REPORT_URL/api/v1/builds/$BUILD_ID/report" \
             -H "x-build-report-token: $REPORT_TOKEN" \
             -H "content-type: application/json" \

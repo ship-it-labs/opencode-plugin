@@ -214,6 +214,10 @@ export function createProjectTools(state: SessionState): ToolRegistry {
 
         const lines = [
           `Uploaded ${result.file_count} files (${(result.total_bytes / 1024).toFixed(0)}KB) for project ${result.project_id}.`,
+          `project_id: ${result.project_id}`,
+          "Use this exact project_id for build_submit and project_run: the platform",
+          "scopes ids per account, so it may differ from the one you passed when the",
+          "slug was already taken by another account.",
           `upload_id: ${result.upload_id}`,
           `sha256: ${result.sha256}`,
         ];

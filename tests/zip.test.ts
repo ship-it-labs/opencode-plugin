@@ -10,8 +10,7 @@ import { buildZipForTest, crc32 } from "../src/tools/project/zip.js";
  * dependencies are unreliable. These tests parse the produced bytes directly so
  * they run identically on every platform without shelling out to unzip.
  */
-function parseZip(buf: Buffer): Array<{ name: string; crc: number; size: number; data: Buffer }> {
-  const entries: Array<{ name: string; crc: number; size: number; data: Buffer }> = [];
+function parseZip(buf: Buffer): Array<{ name: string; crc: number; size: number; data: Buffer }> {  const entries: Array<{ name: string; crc: number; size: number; data: Buffer }> = [];
   let offset = 0;
 
   while (offset + 30 <= buf.length) {
@@ -38,6 +37,17 @@ function parseZip(buf: Buffer): Array<{ name: string; crc: number; size: number;
   return entries;
 }
 
+// The builder streams to a temp file so gigabyte archives never sit in RAM;
+// tests read the file back so every byte-level assertion below is unchanged.
+async function zipBytes(dir: string, files: string[]): Promise<Buffer> {
+  const { path: zipPath } = await buildZipForTest(dir, files);
+  try {
+    return await readFile(zipPath);
+  } finally {
+    await rm(zipPath, { force: true });
+  }
+}
+
 describe("crc32", () => {
   it("matches known reference values", () => {
     expect(crc32(Buffer.from(""))).toBe(0);
@@ -50,7 +60,7 @@ describe("zip archive builder", () => {
   it("writes a valid archive header and end record", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "shipit-zip-"));
     try {
-      const zip = await buildZipForTest(dir, []);
+      const zip = await zipBytes(dir, []);
       expect(zip.subarray(0, 4).toString("hex")).toBe("504b0506");
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -64,7 +74,7 @@ describe("zip archive builder", () => {
       await writeFile(path.join(dir, "package.json"), '{"name":"demo"}');
       await writeFile(path.join(dir, "src", "index.js"), "console.log(1)");
 
-      const zip = await buildZipForTest(dir, [
+      const zip = await zipBytes(dir, [
         path.join(dir, "package.json"),
         path.join(dir, "src", "index.js"),
       ]);
@@ -93,7 +103,7 @@ describe("zip archive builder", () => {
       const nested = path.join(dir, "a", "b", "c.txt");
       await writeFile(nested, "deep");
 
-      const zip = await buildZipForTest(dir, [nested]);
+      const zip = await zipBytes(dir, [nested]);
       const [entry] = parseZip(zip);
 
       expect(entry.name).toBe("a/b/c.txt");
@@ -109,7 +119,7 @@ describe("zip archive builder", () => {
       const payload = Buffer.alloc(300_000, 0x41);
       await writeFile(path.join(dir, "big.bin"), payload);
 
-      const zip = await buildZipForTest(dir, [path.join(dir, "big.bin")]);
+      const zip = await zipBytes(dir, [path.join(dir, "big.bin")]);
       const [entry] = parseZip(zip);
 
       expect(entry.size).toBe(payload.length);
@@ -126,7 +136,7 @@ describe("zip archive builder", () => {
       const payload = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
       await writeFile(path.join(dir, "bytes.bin"), payload);
 
-      const zip = await buildZipForTest(dir, [path.join(dir, "bytes.bin")]);
+      const zip = await zipBytes(dir, [path.join(dir, "bytes.bin")]);
       const [entry] = parseZip(zip);
 
       expect(entry.data.equals(payload)).toBe(true);
@@ -141,7 +151,7 @@ describe("zip archive builder", () => {
       await writeFile(path.join(dir, "one.txt"), "1");
       await writeFile(path.join(dir, "two.txt"), "22");
 
-      const zip = await buildZipForTest(dir, [
+      const zip = await zipBytes(dir, [
         path.join(dir, "one.txt"),
         path.join(dir, "two.txt"),
       ]);
@@ -198,7 +208,7 @@ describe("zip archive builder", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "shipit-zip-"));
     try {
       await writeFile(path.join(dir, "café.txt"), "ok");
-      const zip = await buildZipForTest(dir, [path.join(dir, "café.txt")]);
+      const zip = await zipBytes(dir, [path.join(dir, "café.txt")]);
       const [entry] = parseZip(zip);
       expect(entry.name).toBe("café.txt");
     } finally {

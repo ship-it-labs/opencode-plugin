@@ -7,8 +7,7 @@ import { pipeline } from "node:stream/promises";
 
 /**
  * Minimal ZIP writer using the stored (uncompressed) method, streaming to a
- * temp file so archives of any size (node_modules included, gigabytes) never
- * sit in memory.
+ * temp file so archives of any size never sit in memory.
  *
  * OpenCode loads plugins inside a Bun runtime, where optional native modules
  * such as archiver or yazl are unreliable — hence hand-rolled. Each file takes

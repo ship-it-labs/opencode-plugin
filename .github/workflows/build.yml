@@ -557,9 +557,10 @@ jobs:
           REPORT_URL: ${{ vars.PLATFORM_API_URL }}
         run: |
           set -euo pipefail
-          # The sandbox fetches the bundle from platform storage, not from GH
-          # artifacts. Best-effort: without it the runtime falls back to the
-          # source archive, so a delivery failure warns instead of failing.
+          # The control plane streams the bundle to the running runtime's host
+          # when one is live; otherwise it drains the upload and the GitHub
+          # artifact below stays the only copy. Text fields precede the file
+          # part — the control plane consumes the body in arrival order.
           if [ -z "$REPORT_TOKEN" ] || [ -z "$REPORT_URL" ]; then
             echo "::notice::No report credentials, skipping bundle delivery"
             exit 0
@@ -570,6 +571,8 @@ jobs:
             --retry-all-errors --retry-connrefused \
             -X POST "$REPORT_URL/api/v1/builds/$BUILD_ID/bundle" \
             -H "x-build-report-token: $REPORT_TOKEN" \
+            -F "github_repo=$GITHUB_REPOSITORY" \
+            -F "github_run_id=$GITHUB_RUN_ID" \
             -F "file=@bundle.zip;type=application/zip" > /dev/null; then
             echo "Delivered runtime bundle to the control plane."
           else

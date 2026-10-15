@@ -181,13 +181,16 @@ export function createProjectTools(state: SessionState): ToolRegistry {
           form.append("manifest", JSON.stringify(manifest));
           form.append("file", fileBlob(zipPath), `${args.project_id}.zip`);
 
+          // project_id rides the query string too (in addition to the form
+          // field): the edge resolves the project's home host BEFORE reading
+          // the multipart body, so part order can never scatter files.
           const result = await state.api.upload<{
             project_id: string;
             upload_id: string;
             sha256: string;
             file_count: number;
             total_bytes: number;
-          }>("/api/v1/projects/upload", form);
+          }>(`/api/v1/projects/upload?project_id=${encodeURIComponent(args.project_id)}`, form);
 
           const lines = [
             `Uploaded ${result.file_count} files (${(result.total_bytes / 1024).toFixed(0)}KB) for project ${result.project_id}.`,

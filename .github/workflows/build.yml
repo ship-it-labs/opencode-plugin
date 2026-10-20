@@ -558,9 +558,9 @@ jobs:
         run: |
           set -euo pipefail
           # The control plane streams the bundle to the running runtime's host
-          # when one is live; otherwise it stores the bundle in platform
-          # storage so a later start can fetch it (the GitHub artifact below
-          # stays as the CI-side backup). Text fields precede the file
+          # when one is live; otherwise it keeps only the GitHub artifact and
+          # a start streams it straight to the agent through the build bundle
+          # proxy. Text fields precede the file
           # part — the control plane consumes the body in arrival order.
           if [ -z "$REPORT_TOKEN" ] || [ -z "$REPORT_URL" ]; then
             echo "::notice::No report credentials, skipping bundle delivery"
